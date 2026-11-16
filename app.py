@@ -115,6 +115,12 @@ def auth_page():
             else: st.error('That username is already registered.')
     if st.button('Continue as Guest',type='primary',use_container_width=True): st.session_state.mode='guest'; st.session_state.username='Guest'; st.rerun()
 
+def set_popular_search(item):
+    # Callbacks run before Streamlit rebuilds widgets on the next rerun.
+    st.session_state['product_query'] = item
+    st.session_state['hsn_query'] = ''
+    st.session_state.pop('product_dropdown', None)
+
 def home_page():
     st.title('GST Rate Finder')
     st.caption('Start typing a product name or HSN code. Matching products appear below with their HSN codes.')
@@ -140,7 +146,13 @@ def home_page():
     popular=['Milk','Rice','Shampoo','Toothpaste','Soap','Detergent','Mobile phone','Laptop','Cement','Biscuits','Curd','Toothbrush']
     cols=st.columns(4)
     for i,item in enumerate(popular):
-        if cols[i%4].button(item,key='pop_'+str(i),use_container_width=True): st.session_state.product_query=item; st.session_state.hsn_query=''; st.session_state.pop('product_dropdown',None); st.rerun()
+        cols[i%4].button(
+            item,
+            key='pop_'+str(i),
+            use_container_width=True,
+            on_click=set_popular_search,
+            args=(item,)
+        )
 
 def calculator_page():
     st.title('GST Calculator')
@@ -228,3 +240,4 @@ def main():
     st.divider(); st.caption(DISCLAIMER)
 
 main()
+
