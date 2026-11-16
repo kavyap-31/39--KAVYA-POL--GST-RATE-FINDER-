@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import sqlite3, hashlib, secrets, re, os, io
+import sqlite3, hashlib, secrets, re, io
 from pathlib import Path
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime
@@ -12,14 +12,15 @@ DISCLAIMER='GST FINDER IS AN EDUCATIONAL TOOL, NOT AN OFFICIAL GOVERNMENT PLATFO
 
 st.set_page_config(page_title='GST Finder',page_icon='🧾',layout='wide')
 st.markdown('''<style>
-.block-container{padding-top:1.4rem;max-width:1250px}.stApp{background:var(--background-color)}
+.block-container{padding-top:1.4rem;max-width:1250px}
 [data-testid="stMetric"]{background:rgba(40,110,180,.07);padding:12px;border-radius:12px}
-.main-title{font-size:2.15rem;font-weight:800;color:#1769aa}.subtle{color:var(--text-color);opacity:.75}
+.main-title{font-size:2.15rem;font-weight:800;color:#1769aa}
 </style>''',unsafe_allow_html=True)
 
 @st.cache_data(show_spinner=False)
 def load_products():
-    if not CSV_PATH.exists(): return pd.DataFrame(columns=['product_name','description','hsn_code','gst_rate','cgst','sgst','igst','cess','aliases','source','effective_date','verification_status'])
+    if not CSV_PATH.exists():
+        return pd.DataFrame(columns=['product_name','description','hsn_code','gst_rate','cgst','sgst','igst','cess','aliases','source','effective_date','verification_status'])
     df=pd.read_csv(CSV_PATH,dtype=str).fillna('')
     for c in ['product_name','description','hsn_code','gst_rate','cgst','sgst','igst','cess','aliases','source','effective_date','verification_status']:
         if c not in df: df[c]=''
@@ -60,8 +61,7 @@ def search_products(query='',hsn=''):
     scored=[]
     for ix,r in df.iterrows():
         name=clean(r.product_name); desc=clean(r.description); aliases=[clean(x) for x in str(r.aliases).split(';') if clean(x)]
-        codes=re.findall(r'\d{2,8}',str(r.hsn_code)); hay=' '.join([name,desc,*aliases])
-        score=0
+        codes=re.findall(r'\d{2,8}',str(r.hsn_code)); hay=' '.join([name,desc,*aliases]); score=0
         if q:
             if q==name: score+=200
             if q in name: score+=150
@@ -80,7 +80,7 @@ def search_products(query='',hsn=''):
 
 def money(x):
     try: return Decimal(str(x)).quantize(Decimal('0.01'),rounding=ROUND_HALF_UP)
-    except (InvalidOperation,ValueError): raise ValueError('Enter a valid numeric amount.')
+    except (InvalidOperation,ValueError,TypeError): raise ValueError('Enter a valid numeric amount.')
 
 def show_product(r):
     st.markdown(f"#### {r.product_name}")
@@ -89,7 +89,8 @@ def show_product(r):
     a.metric('HSN code',r.hsn_code or 'Not established')
     b.metric('GST rate',f"{r.gst_rate}%" if r.gst_rate else 'Not verified')
     c.metric('Cess',r.cess or 'Not specified')
-    if 'HISTORICAL' in r.verification_status.upper() or 'UNVERIFIED' in r.verification_status.upper(): st.warning(r.verification_status+' — do not use as a current verified rate.')
+    status=str(r.verification_status)
+    if 'HISTORICAL' in status.upper() or 'UNVERIFIED' in status.upper(): st.warning(status+' — do not use as a current verified rate.')
     st.caption(f"Source: {r.source} | Effective date: {r.effective_date or 'Not established'}")
 
 def auth_page():
@@ -116,10 +117,9 @@ def auth_page():
     if st.button('Continue as Guest',type='primary',use_container_width=True): st.session_state.mode='guest'; st.session_state.username='Guest'; st.rerun()
 
 def set_popular_search(item):
-    # Callbacks run before Streamlit rebuilds widgets on the next rerun.
-    st.session_state['product_query'] = item
-    st.session_state['hsn_query'] = ''
-    st.session_state.pop('product_dropdown', None)
+    st.session_state['product_query']=item
+    st.session_state['hsn_query']=''
+    st.session_state.pop('product_dropdown',None)
 
 def home_page():
     st.title('GST Rate Finder')
@@ -141,31 +141,31 @@ def home_page():
                 with st.expander(f"{r.product_name}  |  HSN {r.hsn_code or 'Not listed'}"):
                     show_product(r)
     elif q.strip() or h.strip(): st.warning('No matching record in the loaded source database. Try a shorter name, an alternative name or HSN heading. This does not mean the product is exempt or has no GST entry.')
-    if selected is not None: save_history('Product search',q or h, f"{selected.product_name} | HSN {selected.hsn_code}")
+    if selected is not None: save_history('Product search',q or h,f"{selected.product_name} | HSN {selected.hsn_code}")
     st.divider(); st.subheader('Popular searches')
     popular=['Milk','Rice','Shampoo','Toothpaste','Soap','Detergent','Mobile phone','Laptop','Cement','Biscuits','Curd','Toothbrush']
     cols=st.columns(4)
     for i,item in enumerate(popular):
-        cols[i%4].button(
-            item,
-            key='pop_'+str(i),
-            use_container_width=True,
-            on_click=set_popular_search,
-            args=(item,)
-        )
+        cols[i%4].button(item,key='pop_'+str(i),use_container_width=True,on_click=set_popular_search,args=(item,))
 
 def calculator_page():
     st.title('GST Calculator')
     a,b=st.columns(2)
     amount=a.number_input('Amount (₹)',min_value=0.0,value=1000.0,step=100.0)
-    rate=b.selectbox('GST rate', [0,0.1,0.25,1,1.5,3,5,6,12,18,28],index=8)
+    rate=b.selectbox('GST rate',[0,0.1,0.25,1,1.5,3,5,6,12,18,28],index=8)
     inclusive=st.toggle('Amount is GST inclusive',value=False)
     interstate=st.toggle('Inter-state supply (IGST)',value=False)
-    base=money(amount/(1+Decimal(str(rate))/100) if inclusive else amount)
-    tax=money(base*Decimal(str(rate))/100); total=base+tax
+    # Convert BOTH operands to Decimal. Mixing float (number_input) and Decimal
+    # caused the TypeError shown in the previous deployment screenshot.
+    amount_d=Decimal(str(amount))
+    rate_d=Decimal(str(rate))
+    divisor=Decimal('1')+(rate_d/Decimal('100'))
+    base=money(amount_d/divisor if inclusive else amount_d)
+    tax=money(base*rate_d/Decimal('100'))
+    total=money(base+tax)
     x,y,z=st.columns(3); x.metric('Taxable value',f'₹{base}'); y.metric('GST amount',f'₹{tax}'); z.metric('Total',f'₹{total}')
     if interstate: st.write(f'IGST: ₹{tax}')
-    else: st.write(f'CGST: ₹{money(tax/2)}  |  SGST: ₹{money(tax/2)}')
+    else: st.write(f'CGST: ₹{money(tax/Decimal(2))}  |  SGST: ₹{money(tax/Decimal(2))}')
     save_history('GST calculation',str(amount),f'Rate {rate}%; taxable {base}; tax {tax}; total {total}')
 
 def valuation_page():
@@ -177,16 +177,18 @@ def valuation_page():
     discount=st.number_input('Less: eligible invoice discount (₹)',min_value=0.0,value=0.0)
     if st.button('Calculate indicative taxable value'):
         taxable=money(Decimal(str(price))+Decimal(str(incidental))+Decimal(str(other))-Decimal(str(discount)))
-        st.metric('Indicative taxable value',f'₹{taxable}')
-        st.warning('Confirm eligibility of each inclusion/exclusion under Section 15 and the applicable valuation rule. This tool does not automatically determine related-party, agent, pure-agent or non-monetary valuation.')
-        save_history('Valuation',str(price),str(taxable))
+        if taxable<0: st.error('Discounts cannot exceed the combined transaction value and additions.')
+        else:
+            st.metric('Indicative taxable value',f'₹{taxable}')
+            st.warning('Confirm eligibility of each inclusion/exclusion under Section 15 and the applicable valuation rule. This tool does not automatically determine related-party, agent, pure-agent or non-monetary valuation.')
+            save_history('Valuation',str(price),str(taxable))
 
 def bill_page():
     st.title('Bill Preview')
     customer=st.text_input('Customer label (optional)'); desc=st.text_input('Item description'); hsn=st.text_input('HSN code'); taxable=st.number_input('Taxable value (₹)',min_value=0.0); rate=st.number_input('GST rate (%)',min_value=0.0,max_value=100.0,value=18.0)
     igst=st.checkbox('Inter-state supply (IGST)')
-    tax=money(Decimal(str(taxable))*Decimal(str(rate))/100); total=money(Decimal(str(taxable))+tax)
-    lines=[('GST BILL PREVIEW — NOT NECESSARILY A TAX INVOICE'),f'Date: {datetime.now():%d-%m-%Y %H:%M}',f'Customer: {customer}',f'Item: {desc}',f'HSN: {hsn}',f'Taxable value: Rs. {money(taxable)}',f'GST rate: {rate}%',f'IGST: Rs. {tax}' if igst else f'CGST: Rs. {money(tax/2)} | SGST: Rs. {money(tax/2)}',f'Total: Rs. {total}',DISCLAIMER]
+    tax=money(Decimal(str(taxable))*Decimal(str(rate))/Decimal('100')); total=money(Decimal(str(taxable))+tax)
+    lines=['GST BILL PREVIEW — NOT NECESSARILY A TAX INVOICE',f'Date: {datetime.now():%d-%m-%Y %H:%M}',f'Customer: {customer}',f'Item: {desc}',f'HSN: {hsn}',f'Taxable value: Rs. {money(taxable)}',f'GST rate: {rate}%',f'IGST: Rs. {tax}' if igst else f'CGST: Rs. {money(tax/Decimal(2))} | SGST: Rs. {money(tax/Decimal(2))}',f'Total: Rs. {total}',DISCLAIMER]
     content='\n'.join(lines)
     st.text(content)
     st.download_button('Download TXT',content,file_name='gst_bill_preview.txt',mime='text/plain')
@@ -214,7 +216,8 @@ def info_page():
 - Product aliases are search aids only. Exact HSN classification can depend on ingredients, composition, use, packaging and legal notes.
 ''')
     df=load_products(); st.metric('Rows in bundled product source',len(df))
-    st.download_button('Download master product CSV',CSV_PATH.read_bytes(),file_name='gst_master_database.csv',mime='text/csv')
+    if CSV_PATH.exists(): st.download_button('Download master product CSV',CSV_PATH.read_bytes(),file_name='gst_master_database.csv',mime='text/csv')
+    else: st.error('gst_master_database.csv is missing. Add it beside app.py.')
 
 def history_page():
     st.title('Search & Calculation History')
